@@ -40,6 +40,17 @@ DEFAULT_K_PERCENTS = [10, 25, 50, 75, 90, 100]
 
 # Text-classifier baselines (TF-IDF and embedding-based, from collaborator)
 # Format: {dataset_name: {k_percent: (tfidf_acc, tfidf_auc, embed_acc, embed_auc)}}
+# Gemini zero-shot baselines (from collaborator)
+# Format: {dataset_name: {k_percent: accuracy}}
+GEMINI_BASELINES = {
+    "explores_hypotheses": {
+        10: 0.6833, 25: 0.7033, 50: 0.7100, 75: 0.7267, 90: 0.7733,
+    },
+    "has_false_starts": {
+        10: 0.6150, 25: 0.7025, 50: 0.6800, 75: 0.7375, 90: 0.7600,
+    },
+}
+
 TEXT_BASELINES = {
     "has_false_starts": {
         10:  (0.590, 0.663, 0.603, 0.667),
@@ -117,7 +128,7 @@ def sweep(
 ) -> dict:
     """
     Sweep layers x K% for one dataset. Returns dict with:
-      results[(layer_label, k)] = (acc, auc)
+      results[(layer_label, k)] = (acc, auc, acc_se, auc_se)
     where layer_label is int (single layer) or "all" (concat).
     """
     valid = [r for r in records if r["id"] in acts]
@@ -167,61 +178,51 @@ def plot_results(
     results: dict, ds_name: str, k_percents: list[float],
     layer_indices: list[int], output_path: Path,
 ):
-    """2-panel (accuracy, AUC) vs K% plot."""
-    cmap = plt.colormaps["viridis"]
-    colors = [cmap(i / max(1, len(layer_indices) - 1)) for i in range(len(layer_indices))]
+    """Single-panel accuracy vs K% plot."""
+    # Blue shades for per-layer lines (all activations → same hue family)
+    colors = [plt.cm.Blues(0.35 + 0.65 * i / max(1, len(layer_indices) - 1))
+              for i in range(len(layer_indices))]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    fig, ax = plt.subplots(figsize=(8, 5))
 
     for i, layer_idx in enumerate(layer_indices):
         accs = [results[(layer_idx, k)][0] for k in k_percents]
-        aucs = [results[(layer_idx, k)][1] for k in k_percents]
         acc_ses = [results[(layer_idx, k)][2] for k in k_percents]
-        auc_ses = [results[(layer_idx, k)][3] for k in k_percents]
-        ax1.errorbar(k_percents, accs, yerr=acc_ses, marker="o", markersize=4,
-                     color=colors[i], capsize=3, label=f"Layer {layer_idx}")
-        ax2.errorbar(k_percents, aucs, yerr=auc_ses, marker="o", markersize=4,
-                     color=colors[i], capsize=3, label=f"Layer {layer_idx}")
+        ax.errorbar(k_percents, accs, yerr=acc_ses, marker="o", markersize=4,
+                    color=colors[i], capsize=3, label=f"Layer {layer_idx}")
 
     # All layers
     accs = [results[("all", k)][0] for k in k_percents]
-    aucs = [results[("all", k)][1] for k in k_percents]
     acc_ses = [results[("all", k)][2] for k in k_percents]
-    auc_ses = [results[("all", k)][3] for k in k_percents]
-    ax1.errorbar(k_percents, accs, yerr=acc_ses, marker="s", markersize=5,
-                 color="red", linewidth=2, capsize=3, label="All layers")
-    ax2.errorbar(k_percents, aucs, yerr=auc_ses, marker="s", markersize=5,
-                 color="red", linewidth=2, capsize=3, label="All layers")
+    ax.errorbar(k_percents, accs, yerr=acc_ses, marker="s", markersize=5,
+                color="red", linewidth=2, capsize=3, label="All layers")
 
     # Overlay text-classifier baselines if available
     baselines = TEXT_BASELINES.get(ds_name)
     if baselines:
-        bk = sorted(k for k in baselines if k in k_percents or True)
+        bk = sorted(baselines)
         tfidf_accs = [baselines[k][0] for k in bk]
-        tfidf_aucs = [baselines[k][1] for k in bk]
         embed_accs = [baselines[k][2] for k in bk]
-        embed_aucs = [baselines[k][3] for k in bk]
+        ax.plot(bk, tfidf_accs, marker="^", markersize=4, color="orange",
+                linestyle=":", linewidth=1.5, alpha=0.8, label="TF-IDF (text)")
+        ax.plot(bk, embed_accs, marker="v", markersize=4, color="purple",
+                linestyle=":", linewidth=1.5, alpha=0.8, label="Embed (text)")
 
-        ax1.plot(bk, tfidf_accs, marker="^", markersize=4, color="orange",
-                 linestyle=":", linewidth=1.5, alpha=0.8, label="TF-IDF (text)")
-        ax1.plot(bk, embed_accs, marker="v", markersize=4, color="purple",
-                 linestyle=":", linewidth=1.5, alpha=0.8, label="Embed (text)")
-        ax2.plot(bk, tfidf_aucs, marker="^", markersize=4, color="orange",
-                 linestyle=":", linewidth=1.5, alpha=0.8, label="TF-IDF (text)")
-        ax2.plot(bk, embed_aucs, marker="v", markersize=4, color="purple",
-                 linestyle=":", linewidth=1.5, alpha=0.8, label="Embed (text)")
+    # Overlay Gemini zero-shot baseline if available
+    gemini = GEMINI_BASELINES.get(ds_name)
+    if gemini:
+        gk = sorted(gemini)
+        gemini_accs = [gemini[k] for k in gk]
+        ax.plot(gk, gemini_accs, marker="D", markersize=4, color="green",
+                linestyle="--", linewidth=1.5, alpha=0.8, label="Gemini 3 Flash (zero-shot)")
 
-    for ax, ylabel, metric in [
-        (ax1, "Accuracy", "Accuracy"),
-        (ax2, "AUC", "AUC"),
-    ]:
-        ax.axhline(0.5, color="gray", linestyle="--", alpha=0.6, label="Chance")
-        ax.set_xlabel("K% of thinking tokens")
-        ax.set_ylabel(ylabel)
-        ax.set_title(f"LOO CV {metric} vs K% — {ds_name}")
-        ax.legend(fontsize=7, loc="lower right")
-        ax.grid(True, alpha=0.3)
-        ax.set_xlim(0, 105)
+    ax.axhline(0.5, color="gray", linestyle="--", alpha=0.6, label="Chance")
+    ax.set_xlabel("K% of thinking tokens")
+    ax.set_ylabel("Accuracy")
+    ax.set_title(f"LOO CV Accuracy vs K% — {ds_name}")
+    ax.legend(fontsize=7, loc="lower right")
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(0, 105)
 
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -300,15 +301,15 @@ def main():
     results = sweep(acts, records, layer_indices, args.k_percents, args.C)
 
     # Print results table
-    print(f"\n{'Layer':>6} {'K%':>5} {'Accuracy':>10} {'+-':>6} {'AUC':>8} {'+-':>6}")
-    print("-" * 45)
+    print(f"\n{'Layer':>6} {'K%':>5} {'Accuracy':>10} {'+-':>6}")
+    print("-" * 30)
     for layer_idx in layer_indices:
         for k in args.k_percents:
-            acc, auc, acc_se, auc_se = results[(layer_idx, k)]
-            print(f"{layer_idx:>6} {k:>5.0f} {acc:>10.3f} {acc_se:>6.3f} {auc:>8.3f} {auc_se:>6.3f}")
+            acc, _, acc_se, _ = results[(layer_idx, k)]
+            print(f"{layer_idx:>6} {k:>5.0f} {acc:>10.3f} {acc_se:>6.3f}")
     for k in args.k_percents:
-        acc, auc, acc_se, auc_se = results[("all", k)]
-        print(f"{'all':>6} {k:>5.0f} {acc:>10.3f} {acc_se:>6.3f} {auc:>8.3f} {auc_se:>6.3f}")
+        acc, _, acc_se, _ = results[("all", k)]
+        print(f"{'all':>6} {k:>5.0f} {acc:>10.3f} {acc_se:>6.3f}")
 
     # Plot
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
