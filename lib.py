@@ -160,7 +160,7 @@ def build_full_text(tokenizer, prompt: str, thinking: str, answer: str) -> str:
 
 
 def find_thinking_span(
-    tokenizer, prompt: str, thinking: str, answer: str,
+    tokenizer, prompt: str, thinking: str,
 ) -> tuple[torch.Tensor, int, int]:
     """
     Build the full text, tokenize, return (full_ids, start_idx, end_idx) for

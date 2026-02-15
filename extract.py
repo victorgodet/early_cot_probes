@@ -51,7 +51,7 @@ def extract_one(
     answer = rec["answer"]
 
     full_ids, start_idx, end_idx = find_thinking_span(
-        tokenizer, prompt, thinking, answer,
+        tokenizer, prompt, thinking,
     )
 
     try:
@@ -131,7 +131,7 @@ def main():
     args = parser.parse_args()
 
     if not args.all and not args.name:
-        parser.error("provide a dataset name or use --all")
+        args.all = True
 
     # Collect dataset names
     if args.all:
